@@ -1,30 +1,33 @@
-## 1.ipynb
+## 1.ipynb (引進 OOF 與基礎融合)
 
-- 只有 holdout MAE（RF 17,350 / XGB 17,328）、CV MAE ≈ 0.09
-- 用 MAE 而非比賽的 RMSLE，無 OOF、無模型融合 → 最不正確、分數最低
+- 用 10-fold 交叉驗證並收集 OOF 預測值
+- 結果：
+    - 10-fold OOF RMSLE：XGB 跑出 0.12236，Lasso/Ridge 落在 0.13836
+    - 用固定權重把這幾隻融合起來，分數推進到 0.12009，驗證了 Ensemble 方向是對的
 
-## 2.ipynb
+## 2.ipynb (12691.94) ➔ 3.ipynb (12499.26)
 
-- 10-fold OOF RMSLE：XGB 0.12236、Lasso/Ridge 0.13836，固定權重融合 0.12009
-- 流程完整、可從頭跑完，預測值合理（mean ≈ 177k）→ 最正確
+- 修正早停洩漏（Early Stopping Leakage）：
+    - 問題：舊版 eval_set 直接餵 Validation Fold，導致樹模型在訓練時等於偷看了驗證集，以致 OOF 分數虛高、偏樂觀
+    - 解法：將 train_test_split 包進 CV 內圈，改用內圈的 validation 做早停，亦可直接改用固定 n_estimators
+- 融合策略升級（Blending ➔ Stacking）：
+    - 問題：舊版用 scipy.optimize 的 SLSQP 找固定權重，但因權重是在整份 OOF 上全局最佳化，容易 Overfitting
+    - 解法：改用更強健的 Stacking：直接把第一層 5 個模型 OOF 預測值當作特徵，塞給第二層 Meta-Model（用 RidgeCV / ElasticNetCV）去自動學權重，並搭配 10×5 seeds 平均
+- Multiple Seed Averages (防過擬合加強)：讓同一模型跑 5~10 個不同的 random_state 再取平均，用時間換分數，能更穩 LB 降
+- 補齊 Ordinal 編碼：
+    - 舊版只編了幾欄 Quality 欄位，其餘通通丟 One-Hot，導致欄位爆增且樹模型很難抓規律。這次對照 data_description.txt 的順序，把 BsmtExposure, BsmtFinType1/2, GarageFinish, Functional, Fence, CentralAir, PavedDrive, LotShape, LandSlope, Utilities 完整重寫成 OrdinalEncoder
 
-## 3_kaggle_12691.94159 -> 4_kaggle_12499.26636.ipynb
+## 3.ipynb (12499.26) ➔ 4.ipynb
 
-1. 先修早停泄漏：eval_set 用驗證折 → OOF 偏樂觀。改成 eval_set=[(X_train_trans, y_train)] 或固定 n_estimators。這是「CV 好、LB 未必好」的主因。
-2. 融合改 Stacking：目前 5 個手動權重（且權重是在整份 OOF 上最佳化，會過擬合）。改成 RidgeCV/ElasticNetCV 當 meta-model 吃 OOF，並用 10×5 seeds 平均。
-3. 多種子平均：同一模型跑 5~10 個 random_state 取平均，通常直接降 0.002~0.005。
-4. 補 Ordinal 編碼：現在只編品質欄。把 BsmtExposure, BsmtFinType1/2, GarageFinish, Functional, Fence, CentralAir, PavedDrive, LotShape, LandSlope, Utilities 依 data_description 順序改成 OrdinalEncoder（別用 one-hot）。
-
-## 4_kaggle_12499.26636 -> 5_kaggle_572081.48834.ipynb
-
-1. 特徵再加強：
-
-- LotFrontage 用「同 Neighborhood 中位數」補值（比全體中位數好）
-- zero-inflated 欄位（PoolArea/WoodDeckSF/...）加 HasXxx 0/1 flag
-- Neighborhood 做 CV-safe 目標編碼（fold 內 fit）
-- OverallQual × OverallCond、GrLivArea/TotalSF 比率、YearBuilt 分箱
-- 偏態修正改用 Yeo-Johnson（可處理 0／負值），比現在 log1p(max(0,·)) 好
-
-2. 換/加模型：HistGradientBoostingRegressor、KernelRidge(RBF)、SVR、MLP；線性端把共線欄位先砍一輪（1stFlrSF vs TotalBsmtSF）。
-3. 超參調優：Optuna 對 XGB/LGB/Cat 各跑 30~50 trials（LGB num_leaves 15~63、XGB max_depth 3~6、Cat 用 RMSE+verbose=0），搭配 10 折 repeat=2。
-4. 收尾：預測值 np.clip(preds, train_min, train_max)；CV 從 0.1066 壓到 0.113 以下再上傳（同時留意 CV/LB gap）。
+- 特徵工程再加強：
+    - 進階補值：LotFrontage 欄位原本用全體中位數補，太粗糙。改用 Neighborhood 的分群中位數補，更符合真實房價邏輯
+    - 稀疏欄位 flag：針對一堆 0 的 Zero-inflated 欄位（如 PoolArea, WoodDeckSF 等），直接多衍生一欄 HasXxx 的 0/1 二元特徵
+    - 安全目標編碼：對 Neighborhood 這種高基數分類欄位做 Target Encoding，但須嚴格在 fold 內 fit，否則一定洩漏
+    - 組合與分箱：補上 OverallQual × OverallCond 這種直覺的狀態組合特徵，計算居住面積比率（GrLivArea / TotalSF），並對 YearBuilt 做分箱
+    - 偏態轉換換代：特徵修正不再用死板的 log1p(max(0,·))，全面改成 Yeo-Johnson 轉換，能自動尋找最佳參數且更完美處理 0 或負值
+- 擴充模型多樣性：
+    - 加入 HistGradientBoostingRegressor、KernelRidge(RBF)、SVR、MLP 提高模型多樣性
+    - 線性模型端要特別注意，強共線性的欄位（如 1stFlrSF vs TotalBsmtSF）在餵給線性模型（Linear Model）之前要先砍掉一輪，避免干擾線性迴歸
+- 自動化超參調優：引入 Optuna，針對 XGB/LGB/Cat 這三個核心主力各跑 30~50 代的 tuning（如鎖定 LGB 的 num_leaves 15~63、XGB 的 max_depth 3~6，Cat 關掉 verbose）。搭配 10 折交叉驗證重複跑 2 次，確保超參點足夠強健
+- 最後預測輸出前，強制用 np.clip(preds, train_min, train_max) 把超出合理範圍的極端外推值剪掉
+- 目標是把真正的 CV 壓到 0.113 以下，並嚴格盯緊 CV 跟 LB 之間的落差（Gap），不再掉進過擬合陷阱
