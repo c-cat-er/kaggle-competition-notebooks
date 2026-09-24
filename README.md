@@ -1,7 +1,10 @@
-# template-kaggle-competition
+# kaggle-competition-notebooks
 
-## Ref:
+## Sources
 
+- [folder: housing-prices-competition](https://drive.google.com/drive/folders/1vz_Zee98m5c38gGgaped17H5GM0q60PA?usp=drive_link)
+
+## Related files
 - [kaggle-guide](https://docs.google.com/document/d/11luJdlKbpNd26gtNTv23dzLf30I8kFZa4sCKSYMqtEA/edit?usp=drive_link)
 - [ml-dl-dev-flow](https://docs.google.com/document/d/1p4FauFQ_YfXLjegaAMTQATTeVILecH_gZh6cxX7UAX4/edit?usp=drive_link)
 - [ml-project-architecture-template](https://docs.google.com/document/d/1LroaoBhqIfJbhkpd2nCIjxcOfiQ4QzPBa8X9hQLk1aM/edit?tab=t.0)
